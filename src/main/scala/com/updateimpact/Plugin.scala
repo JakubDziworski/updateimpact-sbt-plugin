@@ -72,7 +72,7 @@ object Plugin extends AutoPlugin {
 
     ivySbt.value.withIvy(log) { ivy =>
       val cmd = new CreateModuleDependencies(ivy, log, md, pitii, ur)
-      cmd.forClasspath(cfg, classpathConfiguration.value, dependencyClasspath.value)
+      cmd.forClasspath(cfg, classpathConfiguration.value, externalDependencyClasspath.value)
     }
   }
 
@@ -129,7 +129,7 @@ object Plugin extends AutoPlugin {
       rootProjectName,
       ak,
       buildId.value(),
-      moduleDependencies.asJavaCollection,
+      modulesWithFullLocalDependenciesInfo(moduleDependencies).asJavaCollection,
       Collections.emptyList(),
       "1.0",
       s"sbt-plugin-${UpdateimpactSbtBuildInfo.version}")
@@ -172,5 +172,39 @@ object Plugin extends AutoPlugin {
     if (desktop != null && desktop.isSupported(Desktop.Action.BROWSE)) {
       desktop.browse(URI.create(url))
     }
+  }
+
+  //Swaps internal module dependencies to includes it's dependencies.
+  //If module A depends on local module B we only get info about B without it's dependencies.
+  //Example:
+  //  A depends on cats and module B.
+  //  B depends on macwire.
+  //
+  //  A's tree before (there is no macwire):
+  //    A_
+  //      |_cats
+  //      |_B
+  //
+  //  A's Tree after:
+  //    A_
+  //      |_cats
+  //      |_B
+  //        |_macwire
+  def modulesWithFullLocalDependenciesInfo(modules: Seq[ModuleDependencies]): Seq[ModuleDependencies] = {
+    def extractRootDependency(module: ModuleDependencies) = module
+      .getDependencies.asScala
+      .filter(_.getId == module.getModuleId)
+      .head
+
+    modules.groupBy(_.getConfig).flatMap { case (config, modulesWithinConfig) =>
+      val modulesRootDependencies = modulesWithinConfig.map(extractRootDependency)
+      modulesWithinConfig.map { module =>
+        val dependencyWithFullInfo = module.getDependencies.asScala.map { dependency =>
+          val dependencyWithFullInfo = modulesRootDependencies.find(_.getId == dependency.getId)
+          dependencyWithFullInfo.getOrElse(dependency)
+        }
+        new ModuleDependencies(module.getModuleId, module.getConfig, dependencyWithFullInfo.asJavaCollection)
+      }
+    }.toSeq
   }
 }
